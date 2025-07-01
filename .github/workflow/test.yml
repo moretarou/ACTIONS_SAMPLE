@@ -1,0 +1,94 @@
+name: Deploy to Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        type: choice
+        options:
+          - dev
+          - stg
+          - prd
+        default: 'dev'
+
+jobs:
+  validate-branch:
+    runs-on: ubuntu-latest
+    outputs:
+      can-deploy: ${{ steps.check-branch.outputs.can-deploy }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Check branch permissions
+        id: check-branch
+        run: |
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          BRANCH="${{ github.ref_name }}"
+          
+          echo "Environment: $ENVIRONMENT"
+          echo "Branch: $BRANCH"
+          
+          case $ENVIRONMENT in
+            "dev")
+              echo "Dev environment allows all branches"
+              echo "can-deploy=true" >> $GITHUB_OUTPUT
+              ;;
+            "stg")
+              if [[ "$BRANCH" == "stg" || "$BRANCH" == "main" ]]; then
+                echo "Staging environment allows stg and main branches"
+                echo "can-deploy=true" >> $GITHUB_OUTPUT
+              else
+                echo "Staging environment only allows stg and main branches. Current branch: $BRANCH"
+                echo "can-deploy=false" >> $GITHUB_OUTPUT
+              fi
+              ;;
+            "prd")
+              if [[ "$BRANCH" == "main" ]]; then
+                echo "Production environment allows main branch only"
+                echo "can-deploy=true" >> $GITHUB_OUTPUT
+              else
+                echo "Production environment only allows main branch. Current branch: $BRANCH"
+                echo "can-deploy=false" >> $GITHUB_OUTPUT
+              fi
+              ;;
+            *)
+              echo "Unknown environment: $ENVIRONMENT"
+              echo "can-deploy=false" >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: validate-branch
+    if: needs.validate-branch.outputs.can-deploy == 'true'
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Deploy to Environment
+        run: |
+          echo "Hello World from ${{ github.event.inputs.environment }} environment!"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Timestamp: $(date)"
+
+  deployment-failed:
+    runs-on: ubuntu-latest
+    needs: validate-branch
+    if: needs.validate-branch.outputs.can-deploy == 'false'
+    
+    steps:
+      - name: Deployment blocked
+        run: |
+          echo "❌ Deployment to ${{ github.event.inputs.environment }} environment is not allowed from branch ${{ github.ref_name }}"
+          echo ""
+          echo "Branch restrictions:"
+          echo "- dev: All branches allowed"
+          echo "- stg: Only 'stg' and 'main' branches allowed"
+          echo "- prd: Only 'main' branch allowed"
+          exit 1
